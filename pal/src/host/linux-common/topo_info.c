@@ -144,6 +144,44 @@ static int iterate_ranges_from_file(const char* path, int (*callback)(size_t ind
     return 0;
 }
 
+static int iterate_ranges_from_affinity(size_t threads_cnt, int (*callback)(size_t index, void* arg), void* callback_arg) {
+    size_t cpu_mask_len = BITS_TO_LONGS(threads_cnt);
+    unsigned long* cpu_mask = (unsigned long*)calloc(cpu_mask_len, sizeof(unsigned long));
+    if (!cpu_mask) {
+        return -ENOMEM;
+    }
+
+    int ret = DO_SYSCALL(sched_getaffinity, 0, sizeof(*cpu_mask) * cpu_mask_len, cpu_mask);
+    if (ret < 0) {
+        log_error("sched_getaffinity failed: %s", unix_strerror(ret));
+        goto out;
+    }
+
+    if (ret % sizeof(*cpu_mask)) {
+        ret = -PAL_ERROR_INVAL;
+        goto out;
+    }
+
+    for (size_t i = 0; i < cpu_mask_len; i++) {
+        for (size_t j = 0; j < BITS_IN_TYPE(__typeof__(*cpu_mask)); j++) {
+            size_t thread_idx = i * BITS_IN_TYPE(__typeof__(*cpu_mask)) + j;
+            if (thread_idx >= threads_cnt) {
+                break;
+            }
+            if (cpu_mask[i] & (1ul << j)) {
+                ret = callback(thread_idx, callback_arg);
+                if (ret < 0) {
+                    goto out;
+                }
+            }
+        }
+    }
+
+out:
+    free(cpu_mask);
+    return ret;
+}
+
 static int read_cache_info(struct pal_cache_info* ci, size_t thread_idx, size_t cache_idx) {
     int ret;
 
@@ -319,7 +357,7 @@ int get_topology_info(struct pal_topo_info* topo_info) {
     for (size_t i = 0; i < nodes_cnt; i++)
         numa_nodes[i].is_online = false;
 
-    ret = iterate_ranges_from_file("/sys/devices/system/cpu/online", set_thread_online, threads);
+    ret = iterate_ranges_from_affinity(threads_cnt, set_thread_online, threads);
     if (ret < 0)
         goto fail;
     ret = iterate_ranges_from_file("/sys/devices/system/node/online", set_numa_node_online,
