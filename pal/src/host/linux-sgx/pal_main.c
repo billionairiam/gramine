@@ -150,7 +150,7 @@ static int sanitize_topo_info(struct pal_topo_info* topo_info) {
             return -PAL_ERROR_INVAL;
     }
 
-    if (topo_info->threads_cnt == 0 || !topo_info->threads[0].is_online) {
+    if (topo_info->threads_cnt == 0) {
         // Linux requires this
         return -PAL_ERROR_INVAL;
     }
